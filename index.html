@@ -223,6 +223,14 @@ body.ro .namebtn{pointer-events:none;text-decoration:none}
 .loginbox label .hint{font-weight:400}
 .loginbox input:not([type=checkbox]){border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:10px 12px;font-size:15px;width:100%}
 .loginbox .hint2{font-size:12px}
+.lgtabs{display:flex}.lgtabs button{flex:1}
+.badge{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:999px;background:var(--bad);color:#fff;font-size:11px}
+.ulist{display:grid;gap:8px}
+.urow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px}
+.urow.pending{border-color:var(--warn);background:var(--warn-soft)}
+.urow .nm{font-weight:700} .urow .meta{font-size:12px;color:var(--muted)}
+.urow .ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.urow select{border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 6px;font-weight:600}
 .loginbox .remember{display:flex;align-items:center;gap:8px;font-weight:500}
 .loginbox .btn{padding:10px;font-size:15px}
 .syncing{opacity:.6}
@@ -241,6 +249,8 @@ body.ro .namebtn{pointer-events:none;text-decoration:none}
     <div class="hright">
     <div class="viewers" id="viewers" aria-live="polite"></div>
     <button class="btn" id="pubBtn" hidden>공개 화면 갱신</button>
+    <button class="btn" id="usersBtn" hidden>사용자 관리<span class="badge" id="pendBadge" hidden></span></button>
+    <button class="btn ghost" id="pwBtn" hidden>비밀번호 변경</button>
     <button class="btn ghost" id="logoutBtn" hidden>로그아웃</button>
     <button class="btn" id="closeBtn">이 달 마감</button>
     <div class="stepper" role="group" aria-label="월 선택">
@@ -309,11 +319,16 @@ body.ro .namebtn{pointer-events:none;text-decoration:none}
   <form class="loginbox" id="loginForm" autocomplete="on" method="post" action="#" onsubmit="return false">
     <div class="eyebrow">모모스 · 영도 주차지원</div>
     <h1>주차 관리</h1>
-    <p id="loginMsg">관리팀에서 받은 비밀번호를 넣어 주세요.</p>
-    <label>비밀번호<input type="password" id="lgPw" name="password" autocomplete="current-password" required></label>
-    <p class="hint2">보기용 비밀번호로 들어오면 명단을 볼 수만 있고, 수정용 비밀번호를 받은 사람만 고칠 수 있어요.</p>
-    <label class="remember"><input type="checkbox" id="lgRemember" checked> 이 기기에서 로그인 유지</label>
-    <button class="btn primary" id="lgBtn">들어가기</button>
+    <div class="seg lgtabs" role="tablist"><button type="button" id="modeLogin" aria-pressed="true">로그인</button><button type="button" id="modeSignup" aria-pressed="false">가입하기</button></div>
+    <p id="loginMsg">아이디와 비밀번호로 로그인하세요. 처음이면 [가입하기]를 눌러 주세요.</p>
+    <label>아이디<input id="lgId" name="username" autocomplete="username" required placeholder="영문·숫자 (예: jihyun)"></label>
+    <label class="su" hidden>이름<input id="suName" autocomplete="name" placeholder="예: 조지현"></label>
+    <label class="su" hidden>부서<input id="suDept" placeholder="예: 관리팀"></label>
+    <label>비밀번호<input type="password" id="lgPw" name="password" autocomplete="current-password" required minlength="6"></label>
+    <label class="su" hidden>비밀번호 확인<input type="password" id="suPw2" autocomplete="new-password"></label>
+    <label class="remember li"><input type="checkbox" id="lgRemember" checked> 이 기기에서 로그인 유지</label>
+    <button class="btn primary" id="lgBtn">로그인</button>
+    <p class="hint2 su" hidden>가입하면 관리자가 승인한 뒤 들어올 수 있어요. 승인할 때 '보기' 또는 '수정' 권한이 정해집니다.</p>
   </form>
 </div>
 <div class="overlay" id="overlay" hidden><div class="modal" id="modal" role="dialog" aria-modal="true"></div></div>
@@ -952,14 +967,18 @@ function applyPublic(){
 function leavePublic(){ if(!RO) return; RO=false; document.body.classList.remove("ro"); const b=$("banner"); b.hidden=true; b.className="banner"; }
 $("pubBtn").onclick=()=>pubModal();
 
-/* ---------- 구글 시트 저장소 연결 ---------- */
-let SESSION={pw:"",name:"",role:""};
+/* ---------- 구글 시트 저장소 연결 (계정 로그인) ---------- */
+let SESSION={token:"",uid:"",name:"",role:""};
+const ROLE_LABEL={pending:"승인 대기",view:"보기",edit:"수정",admin:"관리자",disabled:"정지"};
+const ERR={bad_login:"아이디나 비밀번호가 맞지 않습니다.",pending:"관리자 승인을 기다리는 중입니다. 승인되면 로그인할 수 있어요.",disabled:"사용이 정지된 계정입니다. 관리팀에 문의해 주세요.",
+  uid_taken:"이미 있는 아이디입니다. 다른 아이디를 써 주세요.",bad_uid:"아이디는 영문·숫자·.-_@ 로 3~40자로 정해 주세요.",bad_name:"이름을 넣어 주세요.",weak_pw:"비밀번호는 6자 이상으로 정해 주세요.",
+  owner_not_set:"Apps Script의 OWNER_ID가 아직 설정되지 않았습니다.",read_only:"보기 권한이라 수정할 수 없습니다.",forbidden:"관리자만 할 수 있습니다.",owner_locked:"소유자 계정은 바꾸거나 지울 수 없습니다."};
 const cache={members:[],lots:[],closings:[],log:[]};
-let rev=null, firstLoad=false, busy=0;
+let rev=null, firstLoad=false, busy=0, pollTimer=null;
 async function api(body){
-  const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({...body,pw:SESSION.pw})});
+  const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({...body,token:SESSION.token})});
   if(!r.ok) throw Object.assign(new Error("서버 응답 오류 "+r.status),{code:"http"});
-  const j=await r.json(); if(!j.ok) throw Object.assign(new Error(j.error||"error"),{code:j.error}); return j;
+  const j=await r.json(); if(!j.ok) throw Object.assign(new Error(ERR[j.error]||j.message||j.error||"error"),{code:j.error}); return j;
 }
 const subs={};
 function setData(d,newRev){ for(const k of Object.keys(cache)) cache[k]=Array.isArray(d?.[k])?d[k]:[]; rev=newRev; firstLoad=true; for(const k of Object.keys(subs)) subs[k].forEach(f=>f()); }
@@ -971,7 +990,7 @@ function snapOf(col,o){
 }
 async function writeOps(ops){
   busy++; document.body.classList.add("syncing");
-  try{ const j=await api({op:"write",ops,by:SESSION.name}); setData(j.data,j.rev); return j.results||[] }
+  try{ const j=await api({op:"write",ops}); setData(j.data,j.rev); return j.results||[] }
   finally{ if(--busy===0) document.body.classList.remove("syncing") }
 }
 function makeDb(){
@@ -983,44 +1002,106 @@ function makeDb(){
     doc:id=>docRef(col+"/"+id)});
   return {collection:q,doc:docRef};
 }
+function statusLine(){ $("status").textContent=`구글 시트와 연결됨 · ${fmtAt(new Date().toISOString())} 기준 · 20초마다 자동 새로고침`; }
+function setPending(n){ const b=$("pendBadge"); b.hidden=!n; b.textContent=n||""; }
 async function refresh(force){
-  if(busy) return;
-  try{ if(!force){const r=await api({op:"rev"}); if(r.rev===rev) return;}
-    const j=await api({op:"load"}); setData(j.data,j.rev);
-    $("status").textContent=`구글 시트와 연결됨 · ${fmtAt(new Date().toISOString())} 기준 · 20초마다 자동 새로고침`;
-  }catch(e){ if(e.code==="unauthorized"){logout("비밀번호가 바뀌었습니다. 다시 로그인해 주세요.");return} $("status").textContent="연결이 잠시 끊겼습니다. 자동으로 다시 시도합니다."; }
+  if(busy||!SESSION.token) return;
+  try{ if(!force){const r=await api({op:"rev"}); setPending(r.pendingCount); if(r.role!==SESSION.role){SESSION.role=r.role;setRole(r.role)} if(r.rev===rev) return;}
+    const j=await api({op:"load"}); setData(j.data,j.rev); setPending(j.pendingCount); statusLine();
+  }catch(e){ if(["unauthorized","pending","disabled"].includes(e.code)){logout(e.code==="unauthorized"?"로그인이 끝났습니다. 다시 로그인해 주세요.":e.message);return} $("status").textContent="연결이 잠시 끊겼습니다. 자동으로 다시 시도합니다."; }
 }
-function logout(msg){ try{localStorage.removeItem("parkSession")}catch{} SESSION={pw:"",name:"",role:""}; setRole(""); $("login").hidden=false; $("logoutBtn").hidden=true; const m=$("loginMsg"); m.textContent=msg||"로그아웃했습니다."; m.className=msg?"err":""; }
+function store(){ try{ const v=JSON.stringify({token:SESSION.token}); if($("lgRemember").checked){localStorage.setItem("parkToken",v);sessionStorage.removeItem("parkToken")} else {sessionStorage.setItem("parkToken",v);localStorage.removeItem("parkToken")} }catch{} }
+function clearStore(){ try{localStorage.removeItem("parkToken");sessionStorage.removeItem("parkToken");localStorage.removeItem("parkSession")}catch{} }
+function logout(msg){
+  const t=SESSION.token; if(t&&!msg) api({op:"logout"}).catch(()=>{});
+  clearStore(); SESSION={token:"",uid:"",name:"",role:""}; setRole("");
+  $("login").hidden=false; ["logoutBtn","pwBtn","usersBtn"].forEach(id=>$(id).hidden=true);
+  const m=$("loginMsg"); m.textContent=msg||"로그아웃했습니다."; m.className=msg?"err":"";
+}
 $("logoutBtn").onclick=()=>logout();
 function setRole(role){
-  const ro=role!=="edit"; RO=ro&&!!role; document.body.classList.toggle("ro",RO);
+  RO=!!role&&role!=="edit"&&role!=="admin"; document.body.classList.toggle("ro",RO);
+  $("usersBtn").hidden=role!=="admin";
   const b=$("banner");
-  if(RO){ b.hidden=false; b.className="banner pub"; b.textContent="보기 전용으로 들어왔습니다. 명단과 금액은 볼 수 있지만 수정은 할 수 없어요. 수정이 필요하면 관리팀에 요청해 주세요."; }
+  if(RO){ b.hidden=false; b.className="banner pub"; b.textContent="보기 권한으로 들어왔습니다. 명단과 금액은 볼 수 있지만 수정은 할 수 없어요. 수정 권한이 필요하면 관리자에게 요청해 주세요."; }
   else { b.hidden=true; b.className="banner"; }
   render();
 }
-async function startWith(pw,name,remember){
-  SESSION={pw,name,role:""}; const m=$("loginMsg"); m.className=""; m.textContent="확인 중…"; $("lgBtn").disabled=true;
-  try{
-    const j=await api({op:"load"});
-    if(remember){try{localStorage.setItem("parkSession",JSON.stringify({pw}))}catch{}} else {try{localStorage.removeItem("parkSession")}catch{}}
-    SESSION.role=j.role||"view"; SESSION.name=j.name||""; myId=SESSION.name||"보기 전용"; $("login").hidden=true; $("logoutBtn").hidden=false;
-    if(!db){ db=makeDb();
-      db.collection("closings").onSnapshot(s=>{const o={};s.docs.forEach(d=>o[d.id]=d.data());closings=o;render()});
-      db.collection("log").orderBy("at","desc").limit(200).onSnapshot(s=>{logs=s.docs.map(d=>({id:d.id,...d.data()}));renderHistory()});
-      db.collection("lots").onSnapshot(s=>{const o=structuredClone(LOTS_DEFAULT);s.docs.forEach(d=>{const v=d.data();o[d.id]={...(o[d.id]||{}),...v,rates:{...(o[d.id]?.rates||{}),...(v.rates||{})}}});lots=o;loaded.l=true;render()});
-      db.collection("members").onSnapshot(s=>{members=s.docs.map(d=>({id:d.id,...d.data()}));loaded.m=true;render()});
-      setInterval(()=>{ if(!document.hidden) refresh(false) },20000);
-      document.addEventListener("visibilitychange",()=>{ if(!document.hidden) refresh(false) });
-    }
-    setData(j.data,j.rev); setRole(SESSION.role);
-    $("status").textContent=`구글 시트와 연결됨 · ${fmtAt(new Date().toISOString())} 기준 · 20초마다 자동 새로고침`;
-  }catch(e){
-    SESSION={pw:"",name:"",role:""}; m.className="err";
-    m.textContent=e.code==="unauthorized"?"비밀번호가 맞지 않습니다.":"저장소에 연결하지 못했습니다. 인터넷 연결이나 설정을 확인해 주세요. ("+(e.message||e)+")";
-  }finally{ $("lgBtn").disabled=false }
+function enter(j){
+  SESSION.uid=j.uid||SESSION.uid; SESSION.name=j.name||SESSION.name; SESSION.role=j.role; myId=SESSION.name;
+  $("login").hidden=true; ["logoutBtn","pwBtn"].forEach(id=>$(id).hidden=false);
+  if(!db){ db=makeDb();
+    db.collection("closings").onSnapshot(s=>{const o={};s.docs.forEach(d=>o[d.id]=d.data());closings=o;render()});
+    db.collection("log").orderBy("at","desc").limit(200).onSnapshot(s=>{logs=s.docs.map(d=>({id:d.id,...d.data()}));renderHistory()});
+    db.collection("lots").onSnapshot(s=>{const o=structuredClone(LOTS_DEFAULT);s.docs.forEach(d=>{const v=d.data();o[d.id]={...(o[d.id]||{}),...v,rates:{...(o[d.id]?.rates||{}),...(v.rates||{})}}});lots=o;loaded.l=true;render()});
+    db.collection("members").onSnapshot(s=>{members=s.docs.map(d=>({id:d.id,...d.data()}));loaded.m=true;render()});
+    pollTimer=setInterval(()=>{ if(!document.hidden) refresh(false) },20000);
+    document.addEventListener("visibilitychange",()=>{ if(!document.hidden) refresh(false) });
+  }
+  setData(j.data,j.rev); setPending(j.pendingCount); setRole(SESSION.role); statusLine();
 }
-$("loginForm").addEventListener("submit",e=>{e.preventDefault();startWith($("lgPw").value,"",$("lgRemember").checked)});
+/* 로그인 / 가입 화면 */
+let mode="login";
+function setMode(m){ mode=m; $("modeLogin").setAttribute("aria-pressed",String(m==="login")); $("modeSignup").setAttribute("aria-pressed",String(m==="signup"));
+  document.querySelectorAll("#loginForm .su").forEach(el=>el.hidden=m!=="signup"); document.querySelectorAll("#loginForm .li").forEach(el=>el.hidden=m!=="login");
+  $("lgBtn").textContent=m==="login"?"로그인":"가입 신청"; $("lgPw").autocomplete=m==="login"?"current-password":"new-password";
+  const msg=$("loginMsg"); msg.className=""; msg.textContent=m==="login"?"아이디와 비밀번호로 로그인하세요. 처음이면 [가입하기]를 눌러 주세요.":"아이디와 이름, 비밀번호를 정해 가입 신청을 하세요."; }
+$("modeLogin").onclick=()=>setMode("login"); $("modeSignup").onclick=()=>setMode("signup");
+$("loginForm").addEventListener("submit",async e=>{
+  e.preventDefault(); const m=$("loginMsg"), btn=$("lgBtn"); const uid=$("lgId").value.trim(), pw=$("lgPw").value;
+  m.className=""; m.textContent="확인 중…"; btn.disabled=true;
+  try{
+    if(mode==="signup"){
+      const name=$("suName").value.trim(), dept=$("suDept").value.trim();
+      if(!name) throw new Error(ERR.bad_name); if(pw!==$("suPw2").value) throw new Error("비밀번호 확인이 맞지 않습니다.");
+      const r=await api({op:"signup",uid,name,dept,pw});
+      if(r.role==="admin"){ setMode("login"); m.textContent="소유자 계정으로 가입했습니다. 바로 로그인하세요."; $("lgPw").value=pw; }
+      else { setMode("login"); m.textContent="가입 신청이 접수됐습니다. 관리자가 승인하면 로그인할 수 있어요."; $("lgPw").value=""; }
+      return;
+    }
+    const r=await api({op:"login",uid,pw}); SESSION.token=r.token; store();
+    const j=await api({op:"load"}); enter(j); $("lgPw").value="";
+  }catch(err){ m.className="err"; m.textContent=err.message||String(err); }
+  finally{ btn.disabled=false }
+});
+/* 비밀번호 변경 */
+$("pwBtn").onclick=()=>openModal(`<h2>비밀번호 변경</h2><form class="form">
+  <label class="full">지금 비밀번호<input type="password" name="old" id="f-oldpw" required autocomplete="current-password"></label>
+  <label>새 비밀번호<input type="password" name="n1" id="f-newpw" required minlength="6" autocomplete="new-password"></label>
+  <label>새 비밀번호 확인<input type="password" name="n2" id="f-newpw2" required minlength="6" autocomplete="new-password"></label>
+  ${foot("변경")}</form>`, async fd=>{
+    if(fd.get("n1")!==fd.get("n2")){toast("새 비밀번호 확인이 맞지 않습니다.");return false}
+    try{ await api({op:"change_pw",oldPw:fd.get("old"),newPw:fd.get("n1")}); toast("비밀번호를 바꿨습니다."); return true }catch(e){ toast(e.message); return false }
+  });
+/* 사용자 관리 (관리자) */
+let USERS=[];
+function usersHtml(){
+  const order={pending:0,admin:1,edit:2,view:3,disabled:4};
+  const list=[...USERS].sort((a,b)=>(order[a.role]??9)-(order[b.role]??9)||ko(a.name,b.name));
+  return list.map(u=>`<div class="urow ${u.role==="pending"?"pending":""}"><div style="min-width:0"><div class="nm">${esc(u.name)} <span class="meta">${esc(u.uid)}${u.dept?` · ${esc(u.dept)}`:""}${u.owner?" · 소유자":""}</span></div>
+    <div class="meta">가입 ${esc(fmtAt(u.createdAt))}${u.lastLogin?` · 최근 로그인 ${esc(fmtAt(u.lastLogin))}`:" · 로그인 기록 없음"}</div></div>
+    <div class="ctl">${u.owner?`<span class="chip ok">관리자</span>`:`<select data-urole="${esc(u.uid)}" aria-label="${esc(u.name)} 권한">${Object.entries(ROLE_LABEL).map(([k,v])=>`<option value="${k}" ${k===u.role?"selected":""}>${v}</option>`).join("")}</select>
+    <button type="button" class="btn ghost" data-ureset="${esc(u.uid)}">비번 초기화</button><button type="button" class="btn ghost danger" data-udel="${esc(u.uid)}">삭제</button>`}</div></div>`).join("")||`<p>가입한 사람이 없습니다.</p>`;
+}
+async function usersModal(){
+  try{ USERS=(await api({op:"users_list"})).users }catch(e){ toast(e.message); return }
+  openModal(`<h2>사용자 관리</h2><p>가입 신청을 승인하려면 권한을 <b>보기</b> 또는 <b>수정</b>으로 바꾸세요. <b>관리자</b>는 사용자 관리까지 할 수 있어요. 바꾸면 바로 저장됩니다.</p>
+    <div class="ulist" id="ulist">${usersHtml()}</div><div class="foot"><div class="r"><button class="btn primary" data-close>닫기</button></div></div>`);
+  $("modal").style.width="min(720px,100%)";
+  const box=$("ulist");
+  box.addEventListener("change",async e=>{const s=e.target.closest("select[data-urole]"); if(!s) return;
+    try{ const r=await api({op:"users_set",uid:s.dataset.urole,role:s.value}); USERS=r.users; box.innerHTML=usersHtml(); toast(`${s.dataset.urole} → ${ROLE_LABEL[s.value]}`); setPending(USERS.filter(u=>u.role==="pending").length) }catch(err){ toast(err.message); box.innerHTML=usersHtml() } });
+  box.addEventListener("click",async e=>{
+    const r1=e.target.closest("[data-ureset]"), r2=e.target.closest("[data-udel]"); const b=r1||r2; if(!b) return;
+    if(b.dataset.armed!=="1"){ b.dataset.armed="1"; b.textContent="한 번 더 누르면 실행"; return }
+    try{
+      if(r1){ const r=await api({op:"users_reset",uid:r1.dataset.ureset}); USERS=r.users; box.innerHTML=usersHtml();
+        openModal(`<h2>임시 비밀번호</h2><p>${esc(r1.dataset.ureset)} 님에게 아래 임시 비밀번호를 직접 전달하세요. 로그인한 뒤 [비밀번호 변경]으로 바꾸도록 안내해 주세요.</p><p style="font-family:var(--mono);font-size:22px;color:var(--fg)">${esc(r.tempPw)}</p><div class="foot"><div class="r"><button class="btn primary" data-close>확인</button></div></div>`) }
+      else { const r=await api({op:"users_delete",uid:r2.dataset.udel}); USERS=r.users; box.innerHTML=usersHtml(); toast("삭제했습니다.") }
+    }catch(err){ toast(err.message) }
+  });
+}
+$("usersBtn").onclick=()=>usersModal();
 
 /* ---------- boot ---------- */
 /* 주소창에 ?password=... 같은 값이 붙어 있으면 바로 지움 (방문 기록에 남지 않게) */
@@ -1029,7 +1110,9 @@ render();
 if(!/^https:\/\/script\.google\.com\//.test(API_URL)){
   const m=$("loginMsg"); m.className="err"; m.textContent="아직 설정이 끝나지 않았습니다. index.html 위쪽의 API_URL에 구글 Apps Script 웹 앱 주소를 넣어 주세요."; $("lgBtn").disabled=true;
 } else {
-  try{const sv=JSON.parse(localStorage.getItem("parkSession")||"null"); if(sv&&sv.pw){$("lgPw").value=sv.pw;startWith(sv.pw,"",true)}}catch{}
+  (async()=>{ let t=null; try{ localStorage.removeItem("parkSession"); t=JSON.parse(localStorage.getItem("parkToken")||sessionStorage.getItem("parkToken")||"null")?.token }catch{}
+    if(!t) return; SESSION.token=t; const m=$("loginMsg"); m.textContent="로그인 확인 중…";
+    try{ const j=await api({op:"load"}); enter(j) }catch(e){ clearStore(); SESSION.token=""; m.className=e.code==="unauthorized"?"":"err"; m.textContent=e.code==="unauthorized"?"아이디와 비밀번호로 로그인하세요.":e.message } })();
 }
 </script>
 
